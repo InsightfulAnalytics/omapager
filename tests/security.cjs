@@ -118,6 +118,7 @@ function newCapacityScope() {
     toasts, refs: {}, refsRevision: 0, keySeed: 0, liveKeys: Object.create(null),
     maxLiveNotifications: 100, heights: {}, leaving: {}, layoutRevision: 0,
     replyingKey: '', held: [], doNotDisturb: false, globalSnoozeUntil: 0,
+    quietStyle: 'alert', unseenHeld: 0, unseenKeys: Object.create(null),
     recentRows: [], recentLimit: 20,
     senderImageQueue: [], senderImageRevision: 0, helperSettingsReady: false,
     configuredDisplayName: 'fixture-display', deckDisplayName: '',
@@ -324,6 +325,18 @@ function newCapacityScope() {
   assert.ok(!JSON.stringify(s.recentRows).includes('938271'));
   s.snoozes[group] = 1;
   assert.equal(s.recentForPanel(5).length, 0);
+}
+
+{ // Colour mode counts each silenced arrival once; silent mode does not count.
+  const s = newCapacityScope();
+  s.doNotDisturb = true;
+  const n = s.fakeNotification(1, 'Held');
+  s.handleNotification(n);
+  s.handleNotification(n);
+  assert.equal(s.unseenHeld, 1);
+  s.quietStyle = 'silent';
+  s.handleNotification(s.fakeNotification(2, 'Held quietly'));
+  assert.equal(s.unseenHeld, 1);
 }
 
 { // Full quiet hides the entire recent list and held arrivals never backfill it.

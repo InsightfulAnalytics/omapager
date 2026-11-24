@@ -163,8 +163,8 @@ Item {
   // last opened; session-only.
   property string quietStyle: "alert"
   property int unseenHeld: 0
-  property var unseenKeys: ({})
-  onUnseenHeldChanged: if (unseenHeld === 0) unseenKeys = ({})
+  property var unseenKeys: Object.create(null)
+  onUnseenHeldChanged: if (unseenHeld === 0) unseenKeys = Object.create(null)
   readonly property string deliveryMode: !doNotDisturb ? "popups"
     : quietStyle === "silent" ? "silent" : "colour"
   function setDeliveryMode(value) {
@@ -1221,9 +1221,11 @@ Item {
               : (globalSnoozeUntil || snoozedUntil(row.groupKey)) ? "snoozed" : ""
     if (muted && codesBypassQuiet && String(row.code || "")) muted = ""
     if (muted && notification.urgency !== NotificationUrgency.Critical) {
-      // A sender update re-enters here with the same key: count keys, not calls.
-      if (muted === "silenced" && quietStyle === "alert" && !unseenKeys[key]) {
-        unseenKeys[key] = true
+      // Count server-assigned ids, not calls. A held notification is released
+      // at once, so a later sender update arrives as a new id and counts again.
+      var unseenId = "n" + String(notification.id || key)
+      if (muted === "silenced" && quietStyle === "alert" && !unseenKeys[unseenId]) {
+        unseenKeys[unseenId] = true
         unseenHeld += 1
       }
       Store.write(storeProc, storeBin, "put", row)
