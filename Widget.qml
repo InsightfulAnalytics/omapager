@@ -27,6 +27,9 @@ BarWidget {
   // than breaking the bar.
   readonly property var service: bar && bar.shell ? bar.shell.serviceFor("njpatel.omapager") : null
   readonly property bool silenced: service ? service.doNotDisturb : false
+  // Local addition: popups | colour | silent (see Service.deliveryMode).
+  readonly property string deliveryMode: service ? service.deliveryMode : "popups"
+  readonly property bool unseen: service ? service.unseenHeld > 0 : false
   readonly property bool sharingActive: service ? service.sharingActive : false
   readonly property bool sharingOfferPending: service ? service.sharingOfferPending : false
 
@@ -257,6 +260,8 @@ BarWidget {
   readonly property string bellOff: "\u{f009b}"
   readonly property string bellSleep: "\u{f00a0}"
   readonly property string bell: "\u{f009a}"
+  readonly property string bellOutline: "\u{f009c}"
+  readonly property string bellRing: "\u{f009e}"
 
   // nf-md-monitor-share: an offer prompted by an active portal share, not a
   // quiet state. It must not look like the snoozed bell beside it.
@@ -328,8 +333,12 @@ BarWidget {
   // means everywhere else.
   function pressed(buttonCode) {
     if (buttonCode === Qt.RightButton) togglePanel()
-    else if (quiet) letEverythingThrough()
-    else toggleSilence()
+    else if (globalSnoozed && !silenced) letEverythingThrough()
+    else if (service) {
+      // popups -> colour -> silent -> popups; back to popups also ends a
+      // global snooze, as the stock click did.
+      if (service.cycleDeliveryMode() === "popups") letEverythingThrough()
+    }
   }
 
   // The system's own clock, not one hardcoded here: 24-hour on this desktop,
@@ -390,7 +399,8 @@ BarWidget {
 
   readonly property string stateLine: {
     if (globalSnoozed) return wakingAt(globalUntil)
-    if (silenced) return "Do Not Disturb on"
+    if (silenced && deliveryMode === "silent") return "Silent: held without a sign"
+    if (silenced) return unseen ? service.unseenHeld + " held, unseen" : "Colour: held, bell lights up"
     if (snoozed.length === 1) return "1 source snoozed"
     if (snoozed.length > 1) return snoozed.length + " sources snoozed"
     return "Notifications enabled"
@@ -463,11 +473,24 @@ BarWidget {
       tooltipText: "Screen sharing detected. Open snooze controls."
     }
 
+    // Local: colour mode. Dim outline bell; lights up (ringing, urgent colour)
+    // while something silenced has arrived since the panel was last opened.
     Indicator {
-      visible: !pager.sharingOfferPending && pager.silenced
+      visible: !pager.sharingOfferPending && pager.deliveryMode === "colour"
+      text: pager.unseen ? pager.bellRing : pager.bellOutline
+      colour: pager.unseen ? pager.silencedColour
+                           : (pager.bar ? pager.bar.barForeground : Color.foreground)
+      quiet: !pager.unseen
+      tooltipText: pager.stateLine + ". Click: silent mode. Right-click: notifications."
+    }
+
+    // Local: silent mode. Dim crossed bell that never changes.
+    Indicator {
+      visible: !pager.sharingOfferPending && pager.deliveryMode === "silent"
       text: pager.bellOff
-      colour: pager.silencedColour
-      tooltipText: "Disable Do Not Disturb. Right-click for notifications."
+      colour: pager.bar ? pager.bar.barForeground : Color.foreground
+      quiet: true
+      tooltipText: pager.stateLine + ". Click: popups. Right-click: notifications."
     }
 
     Indicator {
@@ -482,10 +505,10 @@ BarWidget {
     // own, so it sits in that row without announcing itself.
     Indicator {
       visible: !pager.hasState && !pager.sharingOfferPending
-      text: pager.bellOff
+      text: pager.bell
       colour: pager.bar ? pager.bar.barForeground : Color.foreground
       quiet: true
-      tooltipText: "Enable Do Not Disturb. Right-click for notifications."
+      tooltipText: "Popups on. Click: colour mode. Right-click: notifications."
     }
   }
 
@@ -540,6 +563,7 @@ BarWidget {
     // What has been held back, as of now - read on opening rather than kept
     // up to date, because the panel is the only thing that ever asks.
     if (opened && service) service.refreshHeld()
+    if (opened && service) service.markHeldSeen()
     // Same story for the persisted log: read fresh each time the panel opens.
     if (opened && service) service.refreshHistory()
   }

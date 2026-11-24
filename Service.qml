@@ -150,8 +150,38 @@ Item {
     if (on === doNotDisturb) return
     if (on) silencedSince = Date.now() / 1000
     doNotDisturb = on
+    unseenHeld = 0
     saveQuiet()
   }
+
+  // Local addition: three delivery modes on top of Do Not Disturb.
+  //   popups  - DND off; cards appear as usual.
+  //   colour  - DND on; the bar bell lights up while anything is held unseen.
+  //   silent  - DND on; held with no sign until the panel is opened.
+  // quietStyle is what DND means ("alert" or "silent"), saved with the rest of
+  // the quiet state. unseenHeld counts silenced arrivals since the panel was
+  // last opened; session-only.
+  property string quietStyle: "alert"
+  property int unseenHeld: 0
+  property var unseenKeys: Object.create(null)
+  onUnseenHeldChanged: if (unseenHeld === 0) unseenKeys = Object.create(null)
+  readonly property string deliveryMode: !doNotDisturb ? "popups"
+    : quietStyle === "silent" ? "silent" : "colour"
+  function setDeliveryMode(value) {
+    var m = String(value || "")
+    if (m === "popups") { setDoNotDisturb(false); return deliveryMode }
+    if (m !== "colour" && m !== "silent") return deliveryMode
+    quietStyle = m === "silent" ? "silent" : "alert"
+    unseenHeld = 0
+    if (doNotDisturb) saveQuiet()
+    else setDoNotDisturb(true)
+    return deliveryMode
+  }
+  function cycleDeliveryMode() {
+    var order = ["popups", "colour", "silent"]
+    return setDeliveryMode(order[(order.indexOf(deliveryMode) + 1) % order.length])
+  }
+  function markHeldSeen() { unseenHeld = 0 }
 
   // The Hyprland portal names all its PipeWire video streams alike: monitor,
   // window and region. Observe their lifetime, not compositor frame activity,
@@ -482,7 +512,7 @@ Item {
   function saveQuiet() {
     Store.write(storeProc, storeBin, "quiet-save",
                 { snoozes: snoozes, dnd: doNotDisturb, silencedSince: silencedSince,
-                  codesBypassQuiet: codesBypassQuiet })
+                  codesBypassQuiet: codesBypassQuiet, quietStyle: quietStyle })
   }
 
   // A small session-only reading stack for notifications that were not quietened.
@@ -1191,6 +1221,13 @@ Item {
               : (globalSnoozeUntil || snoozedUntil(row.groupKey)) ? "snoozed" : ""
     if (muted && codesBypassQuiet && String(row.code || "")) muted = ""
     if (muted && notification.urgency !== NotificationUrgency.Critical) {
+      // Count server-assigned ids, not calls. A held notification is released
+      // at once, so a later sender update arrives as a new id and counts again.
+      var unseenId = "n" + String(notification.id || key)
+      if (muted === "silenced" && quietStyle === "alert" && !unseenKeys[unseenId]) {
+        unseenKeys[unseenId] = true
+        unseenHeld += 1
+      }
       Store.write(storeProc, storeBin, "put", row)
       Store.write(storeProc, storeBin, "close", null, [key, muted])
       release(key)
@@ -1952,6 +1989,8 @@ Item {
             // default, not a standing instruction to put it back.
             if (read.codesBypassQuiet !== undefined)
               service.codesBypassQuiet = read.codesBypassQuiet === true
+            if (read.quietStyle === "silent" || read.quietStyle === "alert")
+              service.quietStyle = read.quietStyle
           }
         } catch (e) {}
         service.snoozeRevision += 1
@@ -2004,7 +2043,8 @@ Item {
     // which of the sender's actions survived, how tall is each card.
     function probe(): string {
       return JSON.stringify({fontScale: service.fontScale, toasts: toasts.count,
-        doNotDisturb: service.doNotDisturb, expanded: service.expanded,
+        doNotDisturb: service.doNotDisturb, deliveryMode: service.deliveryMode,
+        unseenHeld: service.unseenHeld, expanded: service.expanded,
         hasWlCopy: service.hasWlCopy, security: service.sandboxStatus,
         fetchRemoteIcons: service.fetchIcons,
         allowDefaultActionOnCardClick: service.allowDefaultActionOnCardClick,
@@ -2024,9 +2064,12 @@ Item {
     // Re-reads Hyprland's window list now, for a test that cannot wait on events.
     function refreshFullscreen(): string { hyprRefresh.restart(); return "ok" }
     function dnd(): string {
-      service.doNotDisturb = !service.doNotDisturb
+      service.setDoNotDisturb(!service.doNotDisturb)
       return service.doNotDisturb ? "on" : "off"
     }
+    // popups | colour | silent; "" or anything else reports the current mode.
+    function mode(value: string): string { return service.setDeliveryMode(value) }
+    function cycleMode(): string { return service.cycleDeliveryMode() }
     // Drive the deck without a pointer: a headless session has no cursor, and
     // a recording needs the expansion to happen on cue rather than by hand.
     function expand(): string {
